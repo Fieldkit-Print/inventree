@@ -1,0 +1,67 @@
+services:
+
+  inventree-db:
+    image: postgres:16
+    container_name: inventree-db
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdb
+      POSTGRES_USER: ${INVENTREE_DB_USER:-inventree}
+      POSTGRES_PASSWORD: ${INVENTREE_DB_PASSWORD:?DB password required}
+      POSTGRES_DB: ${INVENTREE_DB_NAME:-inventree}
+    volumes:
+      - inventree-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${INVENTREE_DB_USER:-inventree}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  inventree-cache:
+    image: redis:7
+    container_name: inventree-cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  inventree-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inventree-server
+    restart: unless-stopped
+    depends_on:
+      inventree-db:
+        condition: service_healthy
+      inventree-cache:
+        condition: service_healthy
+    ports:
+      - "${INVENTREE_WEB_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      - inventree-data:/home/inventree/data
+
+  inventree-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inventree-worker
+    restart: unless-stopped
+    command: invoke worker
+    depends_on:
+      inventree-db:
+        condition: service_healthy
+      inventree-cache:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - inventree-data:/home/inventree/data
+
+volumes:
+  inventree-db-data:
+  inventree-data:

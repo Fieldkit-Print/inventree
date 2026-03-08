@@ -1,0 +1,3 @@
+# Third-party InvenTree plugins (pip-installable)
+# Add one package per line, e.g.:
+# inventree-brother-plugin
