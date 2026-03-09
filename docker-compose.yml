@@ -24,21 +24,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  inventree-init:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: inventree-init
-    command: invoke migrate
-    depends_on:
-      inventree-db:
-        condition: service_healthy
-      inventree-cache:
-        condition: service_healthy
-    env_file:
-      - .env
-    volumes:
-      - inventree-data:/home/inventree/data
   inventree-server:
     build:
       context: .
@@ -46,8 +31,10 @@ services:
     container_name: inventree-server
     restart: unless-stopped
     depends_on:
-      inventree-init:
-        condition: service_completed_successfully
+      inventree-db:
+        condition: service_healthy
+      inventree-cache:
+        condition: service_healthy
     ports:
       - "${INVENTREE_WEB_PORT:-8000}:8000"
     env_file:
@@ -62,8 +49,10 @@ services:
     restart: unless-stopped
     command: invoke worker
     depends_on:
-      inventree-init:
-        condition: service_completed_successfully
+      inventree-db:
+        condition: service_healthy
+      inventree-cache:
+        condition: service_healthy
     env_file:
       - .env
     volumes:
