@@ -1,5 +1,4 @@
 services:
-
   inventree-db:
     image: postgres:16
     container_name: inventree-db
@@ -16,7 +15,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
   inventree-cache:
     image: redis:7
     container_name: inventree-cache
@@ -26,7 +24,21 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
+  inventree-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inventree-init
+    command: invoke update
+    depends_on:
+      inventree-db:
+        condition: service_healthy
+      inventree-cache:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - inventree-data:/home/inventree/data
   inventree-server:
     build:
       context: .
@@ -34,17 +46,14 @@ services:
     container_name: inventree-server
     restart: unless-stopped
     depends_on:
-      inventree-db:
-        condition: service_healthy
-      inventree-cache:
-        condition: service_healthy
+      inventree-init:
+        condition: service_completed_successfully
     ports:
       - "${INVENTREE_WEB_PORT:-8000}:8000"
     env_file:
       - .env
     volumes:
       - inventree-data:/home/inventree/data
-
   inventree-worker:
     build:
       context: .
@@ -53,15 +62,12 @@ services:
     restart: unless-stopped
     command: invoke worker
     depends_on:
-      inventree-db:
-        condition: service_healthy
-      inventree-cache:
-        condition: service_healthy
+      inventree-init:
+        condition: service_completed_successfully
     env_file:
       - .env
     volumes:
       - inventree-data:/home/inventree/data
-
 volumes:
   inventree-db-data:
   inventree-data:
