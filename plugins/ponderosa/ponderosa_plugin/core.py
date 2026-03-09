@@ -52,19 +52,11 @@ class PonderosaPlugin(
             'name': 'Core App API Key',
             'description': 'API key for authenticating with core-app REST API',
             'default': '',
-            'protected': True,
         },
-        'PORTAL_WEBHOOK_SECRET': {
-            'name': 'Webhook Secret',
-            'description': 'HMAC secret for validating inbound webhooks from core-app',
+        'N8N_WEBHOOK_URL': {
+            'name': 'N8N Webhook URL',
+            'description': 'URL for forwarding InvenTree events to N8N (e.g. https://n8n.example.com/webhook/inventree)',
             'default': '',
-            'protected': True,
-        },
-        'SYNC_INTERVAL_MINUTES': {
-            'name': 'Sync Interval (minutes)',
-            'description': 'How often to run the full reconciliation sync',
-            'default': 5,
-            'validator': int,
         },
         'STOCK_PUSH_INTERVAL_MINUTES': {
             'name': 'Stock Push Interval (minutes)',
@@ -72,34 +64,13 @@ class PonderosaPlugin(
             'default': 10,
             'validator': int,
         },
-        'AUTO_CREATE_BUILD_ORDERS': {
-            'name': 'Auto-Create Build Orders',
-            'description': 'Automatically create Build Orders from inbound Job events',
-            'validator': bool,
-            'default': True,
-        },
-        'DEFAULT_STOCK_LOCATION': {
-            'name': 'Default Stock Location',
-            'description': 'Default InvenTree StockLocation PK for new stock items',
-            'default': '',
-        },
     }
 
     SCHEDULED_TASKS = {
-        'process_webhook_inbox': {
-            'func': 'ponderosa_plugin.scheduling.process_webhook_inbox',
-            'schedule': 'I',
-            'minutes': 1,
-        },
         'push_stock_levels': {
             'func': 'ponderosa_plugin.scheduling.push_stock_levels',
             'schedule': 'I',
             'minutes': 10,
-        },
-        'full_sync': {
-            'func': 'ponderosa_plugin.scheduling.full_sync',
-            'schedule': 'I',
-            'minutes': 5,
         },
     }
 
@@ -142,23 +113,26 @@ class PonderosaPlugin(
 
     def setup_urls(self):
         from django.urls import path
-        from ponderosa_plugin.webhook_views import webhook_receive, sync_status
+        from ponderosa_plugin.webhook_views import (
+            register_sync_mapping,
+            lookup_sync_mapping,
+            sync_status,
+        )
         from ponderosa_plugin.api_endpoints import (
             job_detail,
             order_detail,
             inventory_sync_status,
             sync_dashboard,
-            trigger_initial_import,
         )
 
         return [
-            path('webhook/', webhook_receive, name='ponderosa-webhook'),
+            path('api/sync-mapping/', register_sync_mapping, name='ponderosa-sync-mapping-register'),
+            path('api/sync-mapping/lookup/', lookup_sync_mapping, name='ponderosa-sync-mapping-lookup'),
             path('status/', sync_status, name='ponderosa-status'),
             path('api/job-detail/<int:build_pk>/', job_detail, name='ponderosa-job-detail'),
             path('api/order-detail/<int:so_pk>/', order_detail, name='ponderosa-order-detail'),
             path('api/inventory-sync/<int:part_pk>/', inventory_sync_status, name='ponderosa-inventory-sync'),
             path('api/sync-dashboard/', sync_dashboard, name='ponderosa-sync-dashboard'),
-            path('api/initial-import/', trigger_initial_import, name='ponderosa-initial-import'),
         ]
 
     def validate_model_deletion(self, instance):
