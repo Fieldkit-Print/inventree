@@ -7,12 +7,11 @@ core-app data for display alongside InvenTree objects.
 import logging
 
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET
 
 from plugin.registry import registry
 
-from ponderosa_plugin.models import SyncLedger, WebhookInbox, StockSyncCheckpoint
+from ponderosa_plugin.models import SyncLedger, StockSyncCheckpoint
 
 logger = logging.getLogger('ponderosa_plugin')
 
@@ -150,32 +149,12 @@ def inventory_sync_status(request, part_pk):
 def sync_dashboard(request):
     """Comprehensive sync dashboard data."""
     from django.utils import timezone
-    from django.db import models as db_models
 
     now = timezone.now()
 
-    # Inbox stats
-    total_received = WebhookInbox.objects.count()
-    total_processed = WebhookInbox.objects.filter(processed_at__isnull=False).count()
-    pending = WebhookInbox.objects.filter(processed_at__isnull=True).count()
-    failed = WebhookInbox.objects.filter(processed_at__isnull=True, attempts__gte=5).count()
-
-    # Recent events
-    recent_events = list(
-        WebhookInbox.objects.order_by('-received_at')[:20].values(
-            'event_id', 'event_type', 'received_at', 'processed_at', 'attempts', 'last_error'
-        )
-    )
-    # Serialize datetimes
-    for evt in recent_events:
-        for key in ('received_at', 'processed_at'):
-            if evt[key]:
-                evt[key] = evt[key].isoformat()
-        evt['event_id'] = str(evt['event_id'])
-
     # Ledger summary
     ledger_summary = {}
-    for entity_type in ['sales_order', 'job', 'inventory_item']:
+    for entity_type in ['sales_order', 'job', 'inventory_item', 'warehouse', 'warehouse_location']:
         entries = SyncLedger.objects.filter(core_entity_type=entity_type)
         ledger_summary[entity_type] = {
             'total': entries.count(),
@@ -200,41 +179,8 @@ def sync_dashboard(request):
 
     return JsonResponse({
         'timestamp': now.isoformat(),
-        'inbox': {
-            'total_received': total_received,
-            'total_processed': total_processed,
-            'pending': pending,
-            'failed': failed,
-        },
         'sync_ledger': ledger_summary,
-        'recent_events': recent_events,
         'recent_errors': recent_errors,
     })
 
 
-@csrf_exempt
-@require_POST
-def trigger_initial_import(request):
-    """Trigger a one-time initial import of all core-app data.
-
-    POST /plugin/ponderosa/api/initial-import/
-    """
-    from ponderosa_plugin.sync_engine import InitialImportHandler
-
-    client = _get_client()
-    if not client:
-        return JsonResponse({
-            'error': 'Core-app API not configured',
-        }, status=503)
-
-    try:
-        result = InitialImportHandler.run(client)
-        return JsonResponse({
-            'status': 'complete',
-            'imported': result,
-        })
-    except Exception as e:
-        logger.exception("Initial import failed: %s", e)
-        return JsonResponse({
-            'error': str(e),
-        }, status=500)
