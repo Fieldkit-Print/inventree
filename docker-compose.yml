@@ -29,7 +29,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: inventree-init
-    command: invoke update
+    command: invoke migrate
     depends_on:
       inventree-db:
         condition: service_healthy
