@@ -52,13 +52,11 @@ class PonderosaPlugin(
             'name': 'Core App API Key',
             'description': 'API key for authenticating with core-app REST API',
             'default': '',
-            'protected': True,
         },
         'PORTAL_WEBHOOK_SECRET': {
             'name': 'Webhook Secret',
             'description': 'HMAC secret for validating inbound webhooks from core-app',
             'default': '',
-            'protected': True,
         },
         'SYNC_INTERVAL_MINUTES': {
             'name': 'Sync Interval (minutes)',
