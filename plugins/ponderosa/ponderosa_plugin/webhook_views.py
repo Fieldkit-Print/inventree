@@ -1,7 +1,11 @@
-"""Webhook endpoints for receiving events from core-app's InvenTreeIntegrationConnector."""
+"""API endpoints for N8N integration and sync status.
 
-import hashlib
-import hmac
+N8N handles entity creation in InvenTree. These endpoints let N8N:
+- Register SyncLedger mappings after creating entities
+- Query existing mappings
+- Check sync health
+"""
+
 import json
 import logging
 import uuid
@@ -11,85 +15,115 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 
-from plugin.registry import registry
-
-from ponderosa_plugin.models import WebhookInbox, SyncLedger
+from ponderosa_plugin.models import SyncLedger
 
 logger = logging.getLogger('ponderosa_plugin')
 
 
-def _get_plugin():
-    return registry.get_plugin('ponderosa')
-
-
-def _validate_hmac(request) -> bool:
-    """Validate the HMAC-SHA256 signature on inbound webhooks."""
-    plugin = _get_plugin()
-    if not plugin:
-        return False
-
-    secret = plugin.get_setting('PORTAL_WEBHOOK_SECRET')
-    if not secret:
-        # No secret configured — accept all (development mode)
-        logger.warning("No PORTAL_WEBHOOK_SECRET configured — skipping HMAC validation")
-        return True
-
-    signature = request.headers.get('X-Ponderosa-Signature', '')
-    if not signature:
-        return False
-
-    expected = hmac.new(
-        secret.encode('utf-8'),
-        request.body,
-        hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(signature, expected)
-
-
 @csrf_exempt
 @require_POST
-def webhook_receive(request):
-    """Receive events from core-app, validate HMAC, buffer in WebhookInbox.
+def register_sync_mapping(request):
+    """Register a SyncLedger mapping after N8N creates an entity in InvenTree.
 
-    Returns 202 Accepted on success. The inbox is processed asynchronously
-    by the scheduled task `process_webhook_inbox`.
+    POST /plugin/ponderosa/api/sync-mapping/
+    Body: {
+        "core_entity_type": "job",
+        "core_id": "uuid-string",
+        "inventree_model": "Build",
+        "inventree_pk": 123
+    }
     """
-    if not _validate_hmac(request):
-        return JsonResponse({'error': 'Invalid signature'}, status=401)
-
     try:
         body = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
-    # Extract event metadata
-    event_id = body.get('eventId')
-    if not event_id:
-        return JsonResponse({'error': 'Missing eventId'}, status=400)
+    core_entity_type = body.get('core_entity_type')
+    core_id = body.get('core_id')
+    inventree_model = body.get('inventree_model')
+    inventree_pk = body.get('inventree_pk')
+
+    if not all([core_entity_type, core_id, inventree_model, inventree_pk]):
+        return JsonResponse({
+            'error': 'Missing required fields: core_entity_type, core_id, inventree_model, inventree_pk',
+        }, status=400)
 
     try:
-        event_uuid = uuid.UUID(str(event_id))
+        core_uuid = uuid.UUID(str(core_id))
     except ValueError:
-        return JsonResponse({'error': 'Invalid eventId format'}, status=400)
+        return JsonResponse({'error': 'Invalid core_id UUID format'}, status=400)
 
-    resource_type = body.get('resourceType', '')
-    action = body.get('action', '')
-    event_type = f"{resource_type}.{action}"
+    valid_entity_types = {t[0] for t in SyncLedger.ENTITY_TYPES}
+    if core_entity_type not in valid_entity_types:
+        return JsonResponse({
+            'error': f'Invalid core_entity_type. Must be one of: {", ".join(sorted(valid_entity_types))}',
+        }, status=400)
 
-    # Idempotency: skip if we already have this event
-    if WebhookInbox.objects.filter(event_id=event_uuid).exists():
-        logger.debug("Duplicate webhook event %s — returning 202", event_id)
-        return JsonResponse({'status': 'already_received'}, status=202)
+    valid_models = {m[0] for m in SyncLedger.INVENTREE_MODELS}
+    if inventree_model not in valid_models:
+        return JsonResponse({
+            'error': f'Invalid inventree_model. Must be one of: {", ".join(sorted(valid_models))}',
+        }, status=400)
 
-    WebhookInbox.objects.create(
-        event_id=event_uuid,
-        event_type=event_type,
-        payload=body,
+    ledger, created = SyncLedger.objects.update_or_create(
+        core_entity_type=core_entity_type,
+        core_id=core_uuid,
+        defaults={
+            'inventree_model': inventree_model,
+            'inventree_pk': int(inventree_pk),
+            'sync_status': 'synced',
+            'error_message': None,
+        },
     )
 
-    logger.info("Received webhook event %s: %s", event_id, event_type)
-    return JsonResponse({'status': 'accepted'}, status=202)
+    return JsonResponse({
+        'status': 'created' if created else 'updated',
+        'id': ledger.pk,
+        'core_entity_type': ledger.core_entity_type,
+        'core_id': str(ledger.core_id),
+        'inventree_model': ledger.inventree_model,
+        'inventree_pk': ledger.inventree_pk,
+    }, status=201 if created else 200)
+
+
+@require_GET
+def lookup_sync_mapping(request):
+    """Look up a SyncLedger mapping.
+
+    GET /plugin/ponderosa/api/sync-mapping/?core_id=<uuid>
+    GET /plugin/ponderosa/api/sync-mapping/?inventree_model=Build&inventree_pk=123
+    """
+    core_id = request.GET.get('core_id')
+    inventree_model = request.GET.get('inventree_model')
+    inventree_pk = request.GET.get('inventree_pk')
+
+    if core_id:
+        try:
+            core_uuid = uuid.UUID(str(core_id))
+        except ValueError:
+            return JsonResponse({'error': 'Invalid core_id UUID'}, status=400)
+        ledger = SyncLedger.objects.filter(core_id=core_uuid).first()
+    elif inventree_model and inventree_pk:
+        ledger = SyncLedger.objects.filter(
+            inventree_model=inventree_model, inventree_pk=int(inventree_pk)
+        ).first()
+    else:
+        return JsonResponse({
+            'error': 'Provide core_id or inventree_model+inventree_pk query params',
+        }, status=400)
+
+    if not ledger:
+        return JsonResponse({'found': False}, status=404)
+
+    return JsonResponse({
+        'found': True,
+        'core_entity_type': ledger.core_entity_type,
+        'core_id': str(ledger.core_id),
+        'inventree_model': ledger.inventree_model,
+        'inventree_pk': ledger.inventree_pk,
+        'sync_status': ledger.sync_status,
+        'last_synced_at': ledger.last_synced_at.isoformat() if ledger.last_synced_at else None,
+    })
 
 
 @require_GET
@@ -97,27 +131,18 @@ def sync_status(request):
     """Health/status endpoint showing sync state summary."""
     now = timezone.now()
 
-    inbox_pending = WebhookInbox.objects.filter(processed_at__isnull=True).count()
-    inbox_errored = WebhookInbox.objects.filter(
-        processed_at__isnull=True, attempts__gte=3
-    ).count()
-
     ledger_counts = {}
-    for entity_type in ['sales_order', 'job', 'inventory_item']:
-        counts = {
-            'total': SyncLedger.objects.filter(core_entity_type=entity_type).count(),
-            'synced': SyncLedger.objects.filter(core_entity_type=entity_type, sync_status='synced').count(),
-            'pending': SyncLedger.objects.filter(core_entity_type=entity_type, sync_status='pending').count(),
-            'error': SyncLedger.objects.filter(core_entity_type=entity_type, sync_status='error').count(),
+    for entity_type in ['sales_order', 'job', 'inventory_item', 'warehouse', 'warehouse_location']:
+        entries = SyncLedger.objects.filter(core_entity_type=entity_type)
+        ledger_counts[entity_type] = {
+            'total': entries.count(),
+            'synced': entries.filter(sync_status='synced').count(),
+            'pending': entries.filter(sync_status='pending').count(),
+            'error': entries.filter(sync_status='error').count(),
         }
-        ledger_counts[entity_type] = counts
 
     return JsonResponse({
         'status': 'ok',
         'timestamp': now.isoformat(),
-        'inbox': {
-            'pending': inbox_pending,
-            'errored': inbox_errored,
-        },
         'sync_ledger': ledger_counts,
     })
