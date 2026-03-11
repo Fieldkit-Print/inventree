@@ -25,9 +25,14 @@ services:
       timeout: 5s
       retries: 5
   inventree-server:
+    image: inventree/inventree:${INVENTREE_TAG:-stable}-printing
+    pull_policy: never
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
+      args:
+        INVENTREE_TAG: ${INVENTREE_TAG:-stable}
     container_name: inventree-server
     restart: unless-stopped
     depends_on:
@@ -42,9 +47,8 @@ services:
     volumes:
       - inventree-data:/home/inventree/data
   inventree-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: inventree/inventree:${INVENTREE_TAG:-stable}-printing
+    pull_policy: never
     container_name: inventree-worker
     restart: unless-stopped
     command: invoke worker
