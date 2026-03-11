@@ -79,3 +79,133 @@ class StockSyncCheckpoint(models.Model):
 
     def __str__(self):
         return f"StockCheckpoint({self.inventory_item_core_id}) qty={self.last_pushed_quantity}"
+
+
+# ---------------------------------------------------------------------------
+# Production Steps
+# ---------------------------------------------------------------------------
+
+OPERATION_TYPES = [
+    ('digital_print', 'Digital Print'),
+    ('offset_print', 'Offset Print'),
+    ('wide_format', 'Wide Format'),
+    ('cut', 'Cut'),
+    ('fold', 'Fold'),
+    ('score', 'Score'),
+    ('perforate', 'Perforate'),
+    ('laminate', 'Laminate'),
+    ('mount', 'Mount'),
+    ('saddle_stitch', 'Saddle Stitch'),
+    ('perfect_bind', 'Perfect Bind'),
+    ('coil_bind', 'Coil Bind'),
+    ('wire_o', 'Wire-O'),
+    ('collate', 'Collate'),
+    ('pad', 'Pad'),
+    ('drill', 'Drill'),
+    ('numbering', 'Numbering'),
+    ('shrink_wrap', 'Shrink Wrap'),
+    ('package', 'Package'),
+    ('proof_review', 'Proof/Review'),
+    ('qc', 'QC'),
+    ('custom', 'Custom'),
+]
+
+
+class Station(models.Model):
+    """A physical piece of equipment on the shop floor."""
+
+    class Meta:
+        app_label = 'ponderosa_plugin'
+        ordering = ['name']
+
+    STATION_TYPES = [
+        ('press', 'Press'),
+        ('finishing', 'Finishing'),
+        ('binding', 'Binding'),
+        ('packaging', 'Packaging'),
+        ('qc', 'Quality Control'),
+    ]
+
+    name = models.CharField(max_length=100, unique=True)
+    station_type = models.CharField(max_length=20, choices=STATION_TYPES)
+    active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.get_station_type_display()})"
+
+
+class ProductionStepTemplate(models.Model):
+    """Defines a production step on a Part — the recipe for how to make it."""
+
+    class Meta:
+        app_label = 'ponderosa_plugin'
+        ordering = ['part', 'sequence']
+        unique_together = [('part', 'sequence')]
+
+    part = models.ForeignKey(
+        'part.Part',
+        on_delete=models.CASCADE,
+        related_name='production_step_templates',
+    )
+    sequence = models.PositiveIntegerField()
+    operation_type = models.CharField(max_length=20, choices=OPERATION_TYPES)
+    name = models.CharField(max_length=200)
+    estimated_duration = models.DurationField(null=True, blank=True)
+    metadata = models.JSONField(
+        default=dict, blank=True,
+        help_text='Attachment IDs linking to production files on the Part',
+    )
+
+    def __str__(self):
+        return f"{self.part} step {self.sequence}: {self.name}"
+
+
+class BuildOrderStep(models.Model):
+    """A trackable production step on a Build Order."""
+
+    class Meta:
+        app_label = 'ponderosa_plugin'
+        ordering = ['build', 'sequence']
+        unique_together = [('build', 'sequence')]
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['station']),
+        ]
+
+    STEP_STATUSES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('on_hold', 'On Hold'),
+        ('skipped', 'Skipped'),
+    ]
+
+    build = models.ForeignKey(
+        'build.Build',
+        on_delete=models.CASCADE,
+        related_name='production_steps',
+    )
+    template = models.ForeignKey(
+        ProductionStepTemplate,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='build_steps',
+    )
+    sequence = models.PositiveIntegerField()
+    operation_type = models.CharField(max_length=20, choices=OPERATION_TYPES)
+    name = models.CharField(max_length=200)
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_steps',
+    )
+    status = models.CharField(max_length=20, choices=STEP_STATUSES, default='pending')
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    operator_notes = models.TextField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"Build {self.build_id} step {self.sequence}: {self.name} [{self.status}]"

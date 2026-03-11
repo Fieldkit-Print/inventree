@@ -64,6 +64,18 @@ class PonderosaPlugin(
             'default': 10,
             'validator': int,
         },
+        'AUTO_CREATE_BUILD_STEPS': {
+            'name': 'Auto-Create Build Steps',
+            'description': 'Automatically generate production steps from Part templates when a Build Order is created',
+            'validator': bool,
+            'default': True,
+        },
+        'AUTO_COMPLETE_BUILD_ON_STEPS_DONE': {
+            'name': 'Auto-Complete Build on Steps Done',
+            'description': 'Automatically mark a Build Order as complete when all production steps are completed or skipped',
+            'validator': bool,
+            'default': False,
+        },
     }
 
     SCHEDULED_TASKS = {
@@ -88,6 +100,14 @@ class PonderosaPlugin(
                 'feature_type': 'panel',
                 'source': self.plugin_static_file('panels.js:renderJobPanel'),
             })
+            panels.append({
+                'key': 'ponderosa-production-progress',
+                'title': 'Production Progress',
+                'description': 'Production step tracking for this build',
+                'icon': 'ti:list-check:outline',
+                'feature_type': 'panel',
+                'source': self.plugin_static_file('panels.js:renderProductionProgressPanel'),
+            })
 
         if target_model == 'salesorder' and target_id:
             panels.append({
@@ -108,6 +128,14 @@ class PonderosaPlugin(
                 'feature_type': 'panel',
                 'source': self.plugin_static_file('panels.js:renderInventorySyncPanel'),
             })
+            panels.append({
+                'key': 'ponderosa-production-routing',
+                'title': 'Production Routing',
+                'description': 'Production step templates for this part',
+                'icon': 'ti:route:outline',
+                'feature_type': 'panel',
+                'source': self.plugin_static_file('panels.js:renderProductionRoutingPanel'),
+            })
 
         return panels
 
@@ -124,15 +152,60 @@ class PonderosaPlugin(
             inventory_sync_status,
             sync_dashboard,
         )
+        from ponderosa_plugin.production_api import (
+            station_list_create,
+            station_detail,
+            station_queue,
+            step_template_list_create,
+            step_template_detail,
+            step_template_bulk_sync,
+            build_steps_list,
+            build_step_start,
+            build_step_complete,
+            build_step_hold,
+            build_step_skip,
+            build_step_assign_station,
+            build_step_notes,
+            production_unassigned,
+            production_on_hold,
+            production_overview,
+        )
 
         return [
+            # Sync mapping
             path('api/sync-mapping/', register_sync_mapping, name='ponderosa-sync-mapping-register'),
             path('api/sync-mapping/lookup/', lookup_sync_mapping, name='ponderosa-sync-mapping-lookup'),
             path('status/', sync_status, name='ponderosa-status'),
+
+            # Core-app panels
             path('api/job-detail/<int:build_pk>/', job_detail, name='ponderosa-job-detail'),
             path('api/order-detail/<int:so_pk>/', order_detail, name='ponderosa-order-detail'),
             path('api/inventory-sync/<int:part_pk>/', inventory_sync_status, name='ponderosa-inventory-sync'),
             path('api/sync-dashboard/', sync_dashboard, name='ponderosa-sync-dashboard'),
+
+            # Stations
+            path('api/stations/', station_list_create, name='ponderosa-station-list'),
+            path('api/stations/<int:pk>/', station_detail, name='ponderosa-station-detail'),
+            path('api/stations/<int:pk>/queue/', station_queue, name='ponderosa-station-queue'),
+
+            # Step templates (Part routing)
+            path('api/parts/<int:part_pk>/step-templates/', step_template_list_create, name='ponderosa-step-templates'),
+            path('api/parts/<int:part_pk>/step-templates/<int:pk>/', step_template_detail, name='ponderosa-step-template-detail'),
+            path('api/parts/<int:part_pk>/step-templates/bulk/', step_template_bulk_sync, name='ponderosa-step-template-bulk'),
+
+            # Build order steps
+            path('api/builds/<int:build_pk>/steps/', build_steps_list, name='ponderosa-build-steps'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/start/', build_step_start, name='ponderosa-step-start'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/complete/', build_step_complete, name='ponderosa-step-complete'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/hold/', build_step_hold, name='ponderosa-step-hold'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/skip/', build_step_skip, name='ponderosa-step-skip'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/station/', build_step_assign_station, name='ponderosa-step-station'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/notes/', build_step_notes, name='ponderosa-step-notes'),
+
+            # Manager views
+            path('api/production/unassigned/', production_unassigned, name='ponderosa-production-unassigned'),
+            path('api/production/on-hold/', production_on_hold, name='ponderosa-production-on-hold'),
+            path('api/production/overview/', production_overview, name='ponderosa-production-overview'),
         ]
 
     def validate_model_deletion(self, instance):

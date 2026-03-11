@@ -177,6 +177,167 @@ export async function renderInventorySyncPanel(target, data) {
     }
 }
 
+// ── Part → Production Routing Panel ─────────────────────────────────
+
+export async function renderProductionRoutingPanel(target, data) {
+    if (!target) return;
+    target.innerHTML = loading();
+
+    try {
+        const templates = await fetchJSON(`api/parts/${data.id}/step-templates/`);
+
+        if (!templates || templates.length === 0) {
+            target.innerHTML = infoBox('No production step templates defined for this part. Add templates to define the production routing.');
+            return;
+        }
+
+        let html = `<div style="margin-bottom:12px;">
+            <h4 style="margin:0 0 8px 0;font-size:15px;color:#495057;">
+                Production Routing (${templates.length} step${templates.length !== 1 ? 's' : ''})
+            </h4>
+        </div>`;
+
+        html += `<div style="border:1px solid #dee2e6;border-radius:8px;overflow:hidden;">`;
+        html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+                <tr style="background:#f8f9fa;border-bottom:2px solid #dee2e6;">
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">#</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Step</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Operation</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Duration</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+        for (const tmpl of templates) {
+            html += `<tr style="border-bottom:1px solid #f1f3f5;">
+                <td style="padding:8px 12px;color:#868e96;">${tmpl.sequence}</td>
+                <td style="padding:8px 12px;font-weight:500;">${tmpl.name}</td>
+                <td style="padding:8px 12px;">${operationBadge(tmpl.operation_type)}</td>
+                <td style="padding:8px 12px;color:#868e96;">${tmpl.estimated_duration || '—'}</td>
+            </tr>`;
+        }
+
+        html += `</tbody></table></div>`;
+        target.innerHTML = html;
+    } catch (err) {
+        target.innerHTML = errorBox(`Failed to load production routing: ${err.message}`);
+    }
+}
+
+// ── Build Order → Production Progress Panel ─────────────────────────
+
+export async function renderProductionProgressPanel(target, data) {
+    if (!target) return;
+    target.innerHTML = loading();
+
+    try {
+        const result = await fetchJSON(`api/builds/${data.id}/steps/`);
+
+        if (!result.steps || result.steps.length === 0) {
+            target.innerHTML = infoBox('No production steps for this build order.');
+            return;
+        }
+
+        const p = result.progress;
+
+        // Progress bar
+        let html = `<div style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:13px;color:#495057;font-weight:500;">Progress</span>
+                <span style="font-size:13px;color:#495057;">${p.completed}/${p.total} steps (${p.percent_complete}%)</span>
+            </div>
+            <div style="height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;">
+                <div style="height:100%;width:${p.percent_complete}%;background:#2f9e44;border-radius:4px;transition:width 0.3s;"></div>
+            </div>
+            <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#868e96;">
+                <span>${stepStatusDot('#868e96')} ${p.pending} pending</span>
+                <span>${stepStatusDot('#1971c2')} ${p.in_progress} in progress</span>
+                <span>${stepStatusDot('#2f9e44')} ${p.completed} completed</span>
+                ${p.on_hold ? `<span>${stepStatusDot('#e8590c')} ${p.on_hold} on hold</span>` : ''}
+                ${p.skipped ? `<span>${stepStatusDot('#adb5bd')} ${p.skipped} skipped</span>` : ''}
+            </div>
+        </div>`;
+
+        // Steps list
+        html += `<div style="border:1px solid #dee2e6;border-radius:8px;overflow:hidden;">`;
+        html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+                <tr style="background:#f8f9fa;border-bottom:2px solid #dee2e6;">
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">#</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Step</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Operation</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Station</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Status</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Time</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+        for (const step of result.steps) {
+            const timeStr = step.completed_at
+                ? formatDate(step.completed_at)
+                : step.started_at
+                    ? `Started ${formatDate(step.started_at)}`
+                    : '—';
+            html += `<tr style="border-bottom:1px solid #f1f3f5;">
+                <td style="padding:8px 12px;color:#868e96;">${step.sequence}</td>
+                <td style="padding:8px 12px;font-weight:500;">${step.name}</td>
+                <td style="padding:8px 12px;">${operationBadge(step.operation_type)}</td>
+                <td style="padding:8px 12px;">${step.station ? step.station.name : '<span style="color:#adb5bd;">unassigned</span>'}</td>
+                <td style="padding:8px 12px;">${stepStatusBadge(step.status)}</td>
+                <td style="padding:8px 12px;font-size:11px;color:#868e96;">${timeStr}</td>
+            </tr>`;
+        }
+
+        html += `</tbody></table></div>`;
+        target.innerHTML = html;
+    } catch (err) {
+        target.innerHTML = errorBox(`Failed to load production steps: ${err.message}`);
+    }
+}
+
+// ── Helper: step status badges ──────────────────────────────────────
+
+function stepStatusBadge(status) {
+    const colors = {
+        pending: '#868e96',
+        in_progress: '#1971c2',
+        completed: '#2f9e44',
+        on_hold: '#e8590c',
+        skipped: '#adb5bd',
+    };
+    const color = colors[status] || '#868e96';
+    const label = (status || 'unknown').replace('_', ' ');
+    return `<span style="
+        display:inline-block;
+        padding:2px 8px;
+        border-radius:4px;
+        font-size:11px;
+        font-weight:600;
+        color:#fff;
+        background:${color};
+    ">${label}</span>`;
+}
+
+function stepStatusDot(color) {
+    return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};vertical-align:middle;"></span>`;
+}
+
+function operationBadge(opType) {
+    if (!opType) return '—';
+    const label = opType.replace(/_/g, ' ');
+    return `<span style="
+        display:inline-block;
+        padding:2px 6px;
+        border-radius:3px;
+        font-size:11px;
+        background:#e7f5ff;
+        color:#1971c2;
+        text-transform:capitalize;
+    ">${label}</span>`;
+}
+
 // ── Visibility check ────────────────────────────────────────────────
 
 export function isPanelHidden(context) {
