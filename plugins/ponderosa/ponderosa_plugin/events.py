@@ -3,6 +3,7 @@
 Forwards relevant events to:
 1. Core-app: build.completed/cancelled → push job status
 2. N8N webhook: all relevant events for workflow automation
+3. Auto-generates production steps on build creation
 """
 
 import logging
@@ -37,15 +38,77 @@ N8N_FORWARDED_EVENTS = {
 
 def process_event(plugin, event: str, **kwargs):
     """Called by EventMixin when an InvenTree event fires."""
+    # Auto-generate production steps for new builds
+    if event == 'build.created':
+        _handle_build_created(plugin, kwargs.get('id'))
+
     # Push terminal build statuses back to core-app
     if event == 'build.completed':
         _handle_build_status_change(plugin, kwargs.get('id'), 30)
     elif event == 'build.cancelled':
         _handle_build_status_change(plugin, kwargs.get('id'), 40)
+        _handle_build_cancelled_steps(kwargs.get('id'))
 
     # Forward to N8N webhook
     if event in N8N_FORWARDED_EVENTS:
         _forward_to_n8n(plugin, event, kwargs)
+
+
+def _handle_build_created(plugin, build_pk: int | None):
+    """Auto-generate BuildOrderSteps from the Part's ProductionStepTemplates."""
+    if build_pk is None:
+        return
+
+    if not plugin.get_setting('AUTO_CREATE_BUILD_STEPS'):
+        return
+
+    from build.models import Build
+    from ponderosa_plugin.models import ProductionStepTemplate, BuildOrderStep
+
+    try:
+        build = Build.objects.get(pk=build_pk)
+    except Build.DoesNotExist:
+        return
+
+    # Skip if steps already exist (idempotency)
+    if BuildOrderStep.objects.filter(build=build).exists():
+        return
+
+    templates = ProductionStepTemplate.objects.filter(part=build.part).order_by('sequence')
+    if not templates.exists():
+        logger.debug("Build %s part has no step templates — skipping auto-generation", build_pk)
+        return
+
+    steps_created = []
+    for i, tmpl in enumerate(templates):
+        step = BuildOrderStep.objects.create(
+            build=build,
+            template=tmpl,
+            sequence=tmpl.sequence,
+            step_type=tmpl.step_type,
+            name=tmpl.name,
+            status='queued' if i == 0 else 'pending',
+            metadata=tmpl.metadata,
+        )
+        steps_created.append(step)
+
+    logger.info("Auto-created %d production steps for Build %s", len(steps_created), build_pk)
+
+
+def _handle_build_cancelled_steps(build_pk: int | None):
+    """Mark all non-terminal steps as skipped when a build is cancelled."""
+    if build_pk is None:
+        return
+
+    from ponderosa_plugin.models import BuildOrderStep
+
+    updated = BuildOrderStep.objects.filter(
+        build_id=build_pk,
+        status__in=['pending', 'queued', 'in_progress', 'on_hold', 'blocked'],
+    ).update(status='skipped')
+
+    if updated:
+        logger.info("Skipped %d remaining steps for cancelled Build %s", updated, build_pk)
 
 
 def _handle_build_status_change(plugin, build_pk: int | None, status_code: int):
@@ -127,3 +190,23 @@ def _event_to_model_name(event: str) -> str | None:
         'stocklocation': 'StockLocation',
         'part': 'Part',
     }.get(prefix)
+
+
+def forward_event_to_n8n(payload: dict):
+    """Public function to forward an arbitrary payload to the N8N webhook.
+
+    Used by production_api.py to send step transition events.
+    """
+    plugin = registry.get_plugin('ponderosa')
+    if not plugin:
+        return
+
+    n8n_url = plugin.get_setting('N8N_WEBHOOK_URL')
+    if not n8n_url:
+        return
+
+    try:
+        requests.post(n8n_url, json=payload, timeout=10)
+        logger.debug("Forwarded custom event to N8N: %s", payload.get('event', 'unknown'))
+    except Exception as e:
+        logger.warning("Failed to forward event to N8N: %s", e)

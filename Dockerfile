@@ -1,12 +1,19 @@
-# Extend the official InvenTree stable image
-FROM inventree/inventree:stable
+ARG INVENTREE_TAG=stable
 
-# Install any system-level dependencies your plugins need
-# USER root
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     some-system-package \
-#  && rm -rf /var/lib/apt/lists/*
-# USER inventree
+# prebuild stage — compile CUPS plugin (needs build deps)
+FROM python:3.11-slim-trixie AS prebuild
+
+RUN apt-get update && apt-get install -y libcups2-dev gcc git musl-dev && apt-get clean && \
+    pip install --user --no-cache-dir git+https://github.com/wolflu05/inventree-cups-plugin
+
+# production image — only install the CUPS shared library
+FROM inventree/inventree:${INVENTREE_TAG} AS production
+
+RUN apt-get update && apt-get install -y libcups2 && apt-get clean
+COPY --from=prebuild /root/.local /root/.local
+
+# Install Zebra ZPL label printing plugin
+RUN pip install --no-cache-dir inventree-zebra-plugin
 
 # Copy plugin requirements and install them
 COPY plugins/requirements.txt /home/inventree/plugins-requirements.txt

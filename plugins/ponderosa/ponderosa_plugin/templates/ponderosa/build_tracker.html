@@ -1,0 +1,147 @@
+{% extends "ponderosa/base.html" %}
+{% block title %}Build Tracker — Ponderosa{% endblock %}
+{% block page_title %}Build Tracker{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+    <input type="text" id="search-input" placeholder="Search by SO or build reference..." style="width:260px;">
+    <button class="secondary" onclick="loadTracker()">Refresh</button>
+</div>
+<div id="tracker-container">
+    <div class="loading">Loading build tracker...</div>
+</div>
+<div id="step-modal"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const STATUS_COLORS = {
+        pending: '#868e96', queued: '#fab005', in_progress: '#1971c2',
+        completed: '#2f9e44', on_hold: '#e8590c', blocked: '#e03131', skipped: '#adb5bd',
+    };
+
+    window.loadTracker = async function() {
+        const container = document.getElementById('tracker-container');
+        const search = document.getElementById('search-input').value.trim().toLowerCase();
+
+        try {
+            const data = await api('api/tracker/tree/');
+            let tree = data.tree || [];
+
+            if (search) {
+                tree = tree.filter(entry => {
+                    const so = entry.sales_order;
+                    if ((so.reference || '').toLowerCase().includes(search)) return true;
+                    if ((so.customer_name || '').toLowerCase().includes(search)) return true;
+                    return entry.builds.some(b => (b.reference || '').toLowerCase().includes(search));
+                });
+            }
+
+            if (tree.length === 0) {
+                container.innerHTML = '<div class="empty-state">No matching orders found.</div>';
+                return;
+            }
+
+            let html = '';
+            for (const entry of tree) {
+                const so = entry.sales_order;
+                html += `<div class="card" style="margin-bottom:16px;">
+                    <div class="card-header">
+                        <div>
+                            <span class="card-title">${so.reference || 'SO'}</span>
+                            <span style="margin-left:12px;font-size:13px;color:#495057;">${so.customer_name || ''}</span>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <span class="card-meta">Due: ${formatDate(so.target_date)}</span>
+                        </div>
+                    </div>
+                    <div class="card-body">`;
+
+                if (entry.builds.length === 0) {
+                    html += '<div style="color:#adb5bd;font-size:13px;padding:8px 0;">No build orders</div>';
+                }
+
+                for (const build of entry.builds) {
+                    const p = build.progress;
+                    html += `<div style="border:1px solid #e9ecef;border-radius:6px;padding:12px;margin-top:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <div>
+                                <strong style="font-size:13px;">${build.reference || 'Build'}</strong>
+                                <span style="color:#868e96;font-size:12px;margin-left:8px;">${build.title || ''}</span>
+                                <span style="color:#868e96;font-size:12px;margin-left:8px;">Qty: ${build.quantity}</span>
+                            </div>
+                            <span style="font-size:12px;color:#495057;">${p.completed}/${p.total} (${p.percent_complete}%)</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width:${p.percent_complete}%;background:#2f9e44;"></div>
+                        </div>
+                        <div class="progress-stats">
+                            ${p.pending ? `<span><span class="status-dot" style="background:#868e96;"></span>${p.pending} pending</span>` : ''}
+                            ${p.queued ? `<span><span class="status-dot" style="background:#fab005;"></span>${p.queued} queued</span>` : ''}
+                            ${p.in_progress ? `<span><span class="status-dot" style="background:#1971c2;"></span>${p.in_progress} in progress</span>` : ''}
+                            ${p.completed ? `<span><span class="status-dot" style="background:#2f9e44;"></span>${p.completed} completed</span>` : ''}
+                            ${p.on_hold ? `<span><span class="status-dot" style="background:#e8590c;"></span>${p.on_hold} on hold</span>` : ''}
+                            ${p.blocked ? `<span><span class="status-dot" style="background:#e03131;"></span>${p.blocked} blocked</span>` : ''}
+                            ${p.skipped ? `<span><span class="status-dot" style="background:#adb5bd;"></span>${p.skipped} skipped</span>` : ''}
+                        </div>
+                        <div class="pipeline" style="margin-top:10px;">`;
+
+                    for (let i = 0; i < build.steps.length; i++) {
+                        const step = build.steps[i];
+                        const color = STATUS_COLORS[step.status] || '#868e96';
+                        if (i > 0) html += '<div class="pipeline-connector"></div>';
+                        html += `<div class="pipeline-step" style="background:${color};"
+                                      title="${step.name} (${step.status})"
+                                      onclick='showStepDetail(${JSON.stringify(step).replace(/'/g, "&#39;")})'>
+                            ${step.sequence}
+                        </div>`;
+                    }
+
+                    html += `</div></div>`;
+                }
+
+                html += `</div></div>`;
+            }
+            container.innerHTML = html;
+        } catch (e) {
+            container.innerHTML = `<div class="empty-state" style="color:#e03131;">Failed to load tracker: ${e.message}</div>`;
+        }
+    };
+
+    window.showStepDetail = function(step) {
+        const modal = document.getElementById('step-modal');
+        modal.innerHTML = `
+            <div class="detail-modal-overlay" onclick="closeStepDetail(event)">
+                <div class="detail-modal" onclick="event.stopPropagation()">
+                    <button class="close-btn" onclick="closeStepDetail()">&times;</button>
+                    <h3>${step.name}</h3>
+                    <div class="detail-row"><span class="label">Step Type</span><span class="value">${stepTypeBadge(step.step_type)}</span></div>
+                    <div class="detail-row"><span class="label">Status</span><span class="value">${statusBadge(step.status)}</span></div>
+                    <div class="detail-row"><span class="label">Sequence</span><span class="value">${step.sequence}</span></div>
+                    <div class="detail-row"><span class="label">Station</span><span class="value">${step.station ? step.station.name : '\u2014'}</span></div>
+                    <div class="detail-row"><span class="label">Assigned To</span><span class="value">${step.assigned_to ? step.assigned_to.username : '\u2014'}</span></div>
+                    <div class="detail-row"><span class="label">Priority</span><span class="value">${step.priority}</span></div>
+                    <div class="detail-row"><span class="label">Started</span><span class="value">${formatDateTime(step.started_at)}</span></div>
+                    <div class="detail-row"><span class="label">Completed</span><span class="value">${formatDateTime(step.completed_at)}</span></div>
+                    <div class="detail-row"><span class="label">Notes</span><span class="value">${step.operator_notes || '\u2014'}</span></div>
+                </div>
+            </div>`;
+    };
+
+    window.closeStepDetail = function(e) {
+        if (!e || e.target.classList.contains('detail-modal-overlay')) {
+            document.getElementById('step-modal').innerHTML = '';
+        }
+    };
+
+    let searchTimeout;
+    document.getElementById('search-input').addEventListener('input', () => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(loadTracker, 300);
+    });
+
+    loadTracker();
+})();
+</script>
+{% endblock %}
