@@ -9,6 +9,7 @@ setup(
         'ponderosa_plugin': [
             'ui/static/ponderosa/*.js',
             'ui/static/ponderosa/*.css',
+            'templates/ponderosa/*.html',
         ],
     },
     install_requires=[

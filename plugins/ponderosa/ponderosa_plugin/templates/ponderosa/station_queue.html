@@ -1,0 +1,154 @@
+{% extends "ponderosa/base.html" %}
+{% block title %}Station Queue — Ponderosa{% endblock %}
+{% block page_title %}Station Queue{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+    <select id="station-filter">
+        <option value="">All Stations</option>
+    </select>
+    <select id="group-filter">
+        <option value="">All Groups</option>
+    </select>
+    <button class="secondary" onclick="loadQueue()">Refresh</button>
+    <span id="auto-refresh-label" style="font-size:12px;color:#868e96;margin-left:auto;">Auto-refresh: 30s</span>
+</div>
+<div id="queue-container">
+    <div class="loading">Loading queue...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    let stations = [];
+    let refreshTimer = null;
+
+    async function loadStations() {
+        stations = await api('api/stations/?active=true');
+        const sel = document.getElementById('station-filter');
+        const groups = new Set();
+        stations.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = s.name;
+            sel.appendChild(opt);
+            if (s.station_type) groups.add(s.station_type);
+        });
+        const groupSel = document.getElementById('group-filter');
+        groups.forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g;
+            opt.textContent = g.charAt(0).toUpperCase() + g.slice(1);
+            groupSel.appendChild(opt);
+        });
+    }
+
+    window.loadQueue = async function() {
+        const container = document.getElementById('queue-container');
+        const stationId = document.getElementById('station-filter').value;
+        const group = document.getElementById('group-filter').value;
+
+        let stationsToShow = stations;
+        if (stationId) {
+            stationsToShow = stations.filter(s => s.id == stationId);
+        } else if (group) {
+            stationsToShow = stations.filter(s => s.station_type === group);
+        }
+
+        if (stationsToShow.length === 0) {
+            container.innerHTML = '<div class="empty-state">No stations match the current filter.</div>';
+            return;
+        }
+
+        let allCards = [];
+        for (const station of stationsToShow) {
+            try {
+                const data = await api(`api/stations/${station.id}/queue/`);
+                data.queue.forEach(step => {
+                    step._station_name = station.name;
+                    step._station_id = station.id;
+                });
+                allCards.push(...data.queue);
+            } catch (e) {
+                console.error('Failed to load queue for station', station.id, e);
+            }
+        }
+
+        if (allCards.length === 0) {
+            container.innerHTML = '<div class="empty-state">No queued or in-progress steps for the selected station(s).</div>';
+            return;
+        }
+
+        let html = '';
+        for (const step of allCards) {
+            const isActive = step.status === 'in_progress';
+            html += `<div class="card">
+                <div class="card-header">
+                    <div>
+                        <span class="card-title">${step.name}</span>
+                        <span style="margin-left:8px;">${stepTypeBadge(step.step_type)}</span>
+                    </div>
+                    <div>${statusBadge(step.status)}</div>
+                </div>
+                <div class="card-body">
+                    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+                        <div><span style="color:#868e96;">Build:</span> <strong>${step.build_reference || '\u2014'}</strong></div>
+                        <div><span style="color:#868e96;">Station:</span> ${step._station_name}</div>
+                        <div><span style="color:#868e96;">Due:</span> ${formatDate(step.build_target_date)}</div>
+                        <div><span style="color:#868e96;">Step:</span> ${step.sequence}</div>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    ${!isActive ? `<button class="primary" onclick="startStep(${step.build_id}, ${step.id})">Start</button>` : ''}
+                    ${isActive ? `<button class="success" onclick="completeStep(${step.build_id}, ${step.id})">Complete</button>` : ''}
+                    ${isActive ? `<button class="warning" onclick="holdStep(${step.build_id}, ${step.id})">Hold</button>` : ''}
+                    <button class="danger" onclick="blockStep(${step.build_id}, ${step.id})">Flag Issue</button>
+                    ${!isActive ? `<button onclick="skipStep(${step.build_id}, ${step.id})">Skip</button>` : ''}
+                </div>
+            </div>`;
+        }
+        container.innerHTML = html;
+    };
+
+    async function transitionStep(buildId, stepId, action, body) {
+        try {
+            const opts = { method: 'POST' };
+            if (body) opts.body = JSON.stringify(body);
+            await api(`api/builds/${buildId}/steps/${stepId}/${action}/`, opts);
+            loadQueue();
+        } catch (e) {
+            alert('Action failed: ' + e.message);
+        }
+    }
+
+    window.startStep = (b, s) => transitionStep(b, s, 'start');
+    window.completeStep = (b, s) => transitionStep(b, s, 'complete');
+    window.holdStep = (b, s) => transitionStep(b, s, 'hold');
+    window.skipStep = (b, s) => {
+        if (confirm('Skip this step?')) transitionStep(b, s, 'skip');
+    };
+    window.blockStep = (b, s) => {
+        const notes = prompt('Describe the issue:');
+        if (notes !== null) transitionStep(b, s, 'block', { notes });
+    };
+
+    document.getElementById('station-filter').addEventListener('change', () => {
+        document.getElementById('group-filter').value = '';
+        loadQueue();
+    });
+    document.getElementById('group-filter').addEventListener('change', () => {
+        document.getElementById('station-filter').value = '';
+        loadQueue();
+    });
+
+    async function init() {
+        await loadStations();
+        await loadQueue();
+        refreshTimer = setInterval(loadQueue, 30000);
+    }
+
+    init();
+})();
+</script>
+{% endblock %}

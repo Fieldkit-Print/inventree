@@ -13,7 +13,7 @@ async function fetchJSON(path) {
 }
 
 function formatDate(iso) {
-    if (!iso) return '—';
+    if (!iso) return '\u2014';
     try {
         return new Date(iso).toLocaleString();
     } catch {
@@ -47,7 +47,7 @@ function card(title, rows) {
     for (const [label, value] of rows) {
         html += `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f3f5;">
             <span style="color:#868e96;font-size:13px;">${label}</span>
-            <span style="font-size:13px;font-weight:500;">${value ?? '—'}</span>
+            <span style="font-size:13px;font-weight:500;">${value ?? '\u2014'}</span>
         </div>`;
     }
     html += `</div>`;
@@ -93,10 +93,10 @@ export async function renderJobPanel(target, data) {
 
         const job = result.job || {};
         target.innerHTML = card('Job Info', [
-            ['Job Number', `<strong>${job.jobNumber || '—'}</strong>`],
-            ['Name', job.name || '—'],
-            ['Status', job.status || '—'],
-            ['Quantity', job.quantity ?? '—'],
+            ['Job Number', `<strong>${job.jobNumber || '\u2014'}</strong>`],
+            ['Name', job.name || '\u2014'],
+            ['Status', job.status || '\u2014'],
+            ['Quantity', job.quantity ?? '\u2014'],
             ['Due Date', formatDate(job.dueDate)],
         ]) + card('Sync', [
             ['Core App ID', `<code style="font-size:11px;">${result.core_id}</code>`],
@@ -129,9 +129,9 @@ export async function renderOrderPanel(target, data) {
 
         const order = result.salesOrder || {};
         target.innerHTML = card('Order Info', [
-            ['Order Number', `<strong>${order.orderNumber || '—'}</strong>`],
-            ['Client', order.clientName || '—'],
-            ['Status', order.status || '—'],
+            ['Order Number', `<strong>${order.orderNumber || '\u2014'}</strong>`],
+            ['Client', order.clientName || '\u2014'],
+            ['Status', order.status || '\u2014'],
             ['Ship Date', formatDate(order.requestedShipDate)],
         ]) + card('Sync', [
             ['Core App ID', `<code style="font-size:11px;">${result.core_id}</code>`],
@@ -160,11 +160,11 @@ export async function renderInventorySyncPanel(target, data) {
             : null;
         const deltaStr = delta != null
             ? (delta === 0 ? '0 (in sync)' : `${delta > 0 ? '+' : ''}${delta}`)
-            : '—';
+            : '\u2014';
 
         target.innerHTML = card('Stock Sync', [
             ['InvenTree Quantity', `<strong>${result.inventree_quantity}</strong>`],
-            ['Last Pushed Quantity', result.last_pushed_quantity ?? '—'],
+            ['Last Pushed Quantity', result.last_pushed_quantity ?? '\u2014'],
             ['Delta', deltaStr],
             ['Last Pushed', formatDate(result.last_pushed_at)],
         ]) + card('Sync Status', [
@@ -203,7 +203,7 @@ export async function renderProductionRoutingPanel(target, data) {
                 <tr style="background:#f8f9fa;border-bottom:2px solid #dee2e6;">
                     <th style="padding:8px 12px;text-align:left;color:#495057;">#</th>
                     <th style="padding:8px 12px;text-align:left;color:#495057;">Step</th>
-                    <th style="padding:8px 12px;text-align:left;color:#495057;">Operation</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Type</th>
                     <th style="padding:8px 12px;text-align:left;color:#495057;">Duration</th>
                 </tr>
             </thead>
@@ -213,8 +213,8 @@ export async function renderProductionRoutingPanel(target, data) {
             html += `<tr style="border-bottom:1px solid #f1f3f5;">
                 <td style="padding:8px 12px;color:#868e96;">${tmpl.sequence}</td>
                 <td style="padding:8px 12px;font-weight:500;">${tmpl.name}</td>
-                <td style="padding:8px 12px;">${operationBadge(tmpl.operation_type)}</td>
-                <td style="padding:8px 12px;color:#868e96;">${tmpl.estimated_duration || '—'}</td>
+                <td style="padding:8px 12px;">${stepTypeBadge(tmpl.step_type)}</td>
+                <td style="padding:8px 12px;color:#868e96;">${tmpl.estimated_duration || '\u2014'}</td>
             </tr>`;
         }
 
@@ -252,9 +252,11 @@ export async function renderProductionProgressPanel(target, data) {
             </div>
             <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#868e96;">
                 <span>${stepStatusDot('#868e96')} ${p.pending} pending</span>
+                ${p.queued ? `<span>${stepStatusDot('#fab005')} ${p.queued} queued</span>` : ''}
                 <span>${stepStatusDot('#1971c2')} ${p.in_progress} in progress</span>
                 <span>${stepStatusDot('#2f9e44')} ${p.completed} completed</span>
                 ${p.on_hold ? `<span>${stepStatusDot('#e8590c')} ${p.on_hold} on hold</span>` : ''}
+                ${p.blocked ? `<span>${stepStatusDot('#e03131')} ${p.blocked} blocked</span>` : ''}
                 ${p.skipped ? `<span>${stepStatusDot('#adb5bd')} ${p.skipped} skipped</span>` : ''}
             </div>
         </div>`;
@@ -266,7 +268,7 @@ export async function renderProductionProgressPanel(target, data) {
                 <tr style="background:#f8f9fa;border-bottom:2px solid #dee2e6;">
                     <th style="padding:8px 12px;text-align:left;color:#495057;">#</th>
                     <th style="padding:8px 12px;text-align:left;color:#495057;">Step</th>
-                    <th style="padding:8px 12px;text-align:left;color:#495057;">Operation</th>
+                    <th style="padding:8px 12px;text-align:left;color:#495057;">Type</th>
                     <th style="padding:8px 12px;text-align:left;color:#495057;">Station</th>
                     <th style="padding:8px 12px;text-align:left;color:#495057;">Status</th>
                     <th style="padding:8px 12px;text-align:left;color:#495057;">Time</th>
@@ -279,11 +281,11 @@ export async function renderProductionProgressPanel(target, data) {
                 ? formatDate(step.completed_at)
                 : step.started_at
                     ? `Started ${formatDate(step.started_at)}`
-                    : '—';
+                    : '\u2014';
             html += `<tr style="border-bottom:1px solid #f1f3f5;">
                 <td style="padding:8px 12px;color:#868e96;">${step.sequence}</td>
                 <td style="padding:8px 12px;font-weight:500;">${step.name}</td>
-                <td style="padding:8px 12px;">${operationBadge(step.operation_type)}</td>
+                <td style="padding:8px 12px;">${stepTypeBadge(step.step_type)}</td>
                 <td style="padding:8px 12px;">${step.station ? step.station.name : '<span style="color:#adb5bd;">unassigned</span>'}</td>
                 <td style="padding:8px 12px;">${stepStatusBadge(step.status)}</td>
                 <td style="padding:8px 12px;font-size:11px;color:#868e96;">${timeStr}</td>
@@ -302,12 +304,15 @@ export async function renderProductionProgressPanel(target, data) {
 function stepStatusBadge(status) {
     const colors = {
         pending: '#868e96',
+        queued: '#fab005',
         in_progress: '#1971c2',
         completed: '#2f9e44',
         on_hold: '#e8590c',
+        blocked: '#e03131',
         skipped: '#adb5bd',
     };
     const color = colors[status] || '#868e96';
+    const textColor = status === 'queued' ? '#212529' : '#fff';
     const label = (status || 'unknown').replace('_', ' ');
     return `<span style="
         display:inline-block;
@@ -315,7 +320,7 @@ function stepStatusBadge(status) {
         border-radius:4px;
         font-size:11px;
         font-weight:600;
-        color:#fff;
+        color:${textColor};
         background:${color};
     ">${label}</span>`;
 }
@@ -324,18 +329,18 @@ function stepStatusDot(color) {
     return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};vertical-align:middle;"></span>`;
 }
 
-function operationBadge(opType) {
-    if (!opType) return '—';
-    const label = opType.replace(/_/g, ' ');
+function stepTypeBadge(stepType) {
+    if (!stepType) return '\u2014';
+    const color = stepType.color || '#1971c2';
     return `<span style="
         display:inline-block;
         padding:2px 6px;
         border-radius:3px;
         font-size:11px;
-        background:#e7f5ff;
-        color:#1971c2;
+        background:${color}20;
+        color:${color};
         text-transform:capitalize;
-    ">${label}</span>`;
+    ">${stepType.name || stepType.slug || ''}</span>`;
 }
 
 // ── Visibility check ────────────────────────────────────────────────

@@ -80,13 +80,14 @@ def _handle_build_created(plugin, build_pk: int | None):
         return
 
     steps_created = []
-    for tmpl in templates:
+    for i, tmpl in enumerate(templates):
         step = BuildOrderStep.objects.create(
             build=build,
             template=tmpl,
             sequence=tmpl.sequence,
-            operation_type=tmpl.operation_type,
+            step_type=tmpl.step_type,
             name=tmpl.name,
+            status='queued' if i == 0 else 'pending',
             metadata=tmpl.metadata,
         )
         steps_created.append(step)
@@ -103,7 +104,7 @@ def _handle_build_cancelled_steps(build_pk: int | None):
 
     updated = BuildOrderStep.objects.filter(
         build_id=build_pk,
-        status__in=['pending', 'in_progress', 'on_hold'],
+        status__in=['pending', 'queued', 'in_progress', 'on_hold', 'blocked'],
     ).update(status='skipped')
 
     if updated:

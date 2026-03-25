@@ -153,6 +153,8 @@ class PonderosaPlugin(
             sync_dashboard,
         )
         from ponderosa_plugin.production_api import (
+            step_type_list_create,
+            step_type_detail,
             station_list_create,
             station_detail,
             station_queue,
@@ -163,12 +165,22 @@ class PonderosaPlugin(
             build_step_start,
             build_step_complete,
             build_step_hold,
+            build_step_block,
             build_step_skip,
             build_step_assign_station,
             build_step_notes,
             production_unassigned,
             production_on_hold,
             production_overview,
+            dispatch_bulk_assign,
+            dispatch_reorder,
+            dispatch_board,
+            tracker_tree,
+        )
+        from ponderosa_plugin.page_views import (
+            station_queue_page,
+            build_tracker_page,
+            dispatch_page,
         )
 
         return [
@@ -182,6 +194,10 @@ class PonderosaPlugin(
             path('api/order-detail/<int:so_pk>/', order_detail, name='ponderosa-order-detail'),
             path('api/inventory-sync/<int:part_pk>/', inventory_sync_status, name='ponderosa-inventory-sync'),
             path('api/sync-dashboard/', sync_dashboard, name='ponderosa-sync-dashboard'),
+
+            # Step types
+            path('api/step-types/', step_type_list_create, name='ponderosa-step-types'),
+            path('api/step-types/<int:pk>/', step_type_detail, name='ponderosa-step-type-detail'),
 
             # Stations
             path('api/stations/', station_list_create, name='ponderosa-station-list'),
@@ -198,14 +214,24 @@ class PonderosaPlugin(
             path('api/builds/<int:build_pk>/steps/<int:pk>/start/', build_step_start, name='ponderosa-step-start'),
             path('api/builds/<int:build_pk>/steps/<int:pk>/complete/', build_step_complete, name='ponderosa-step-complete'),
             path('api/builds/<int:build_pk>/steps/<int:pk>/hold/', build_step_hold, name='ponderosa-step-hold'),
+            path('api/builds/<int:build_pk>/steps/<int:pk>/block/', build_step_block, name='ponderosa-step-block'),
             path('api/builds/<int:build_pk>/steps/<int:pk>/skip/', build_step_skip, name='ponderosa-step-skip'),
             path('api/builds/<int:build_pk>/steps/<int:pk>/station/', build_step_assign_station, name='ponderosa-step-station'),
             path('api/builds/<int:build_pk>/steps/<int:pk>/notes/', build_step_notes, name='ponderosa-step-notes'),
 
-            # Manager views
+            # Manager / dispatch views
             path('api/production/unassigned/', production_unassigned, name='ponderosa-production-unassigned'),
             path('api/production/on-hold/', production_on_hold, name='ponderosa-production-on-hold'),
             path('api/production/overview/', production_overview, name='ponderosa-production-overview'),
+            path('api/dispatch/board/', dispatch_board, name='ponderosa-dispatch-board'),
+            path('api/dispatch/bulk-assign/', dispatch_bulk_assign, name='ponderosa-dispatch-bulk-assign'),
+            path('api/dispatch/reorder/', dispatch_reorder, name='ponderosa-dispatch-reorder'),
+            path('api/tracker/tree/', tracker_tree, name='ponderosa-tracker-tree'),
+
+            # Standalone pages
+            path('station-queue/', station_queue_page, name='ponderosa-station-queue-page'),
+            path('build-tracker/', build_tracker_page, name='ponderosa-build-tracker-page'),
+            path('dispatch/', dispatch_page, name='ponderosa-dispatch-page'),
         ]
 
     def validate_model_deletion(self, instance):

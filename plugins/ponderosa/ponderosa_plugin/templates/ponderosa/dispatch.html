@@ -1,0 +1,202 @@
+{% extends "ponderosa/base.html" %}
+{% block title %}Dispatch Board — Ponderosa{% endblock %}
+{% block page_title %}Dispatch Board{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+    <button class="secondary" onclick="loadBoard()">Refresh</button>
+    <button class="secondary" id="bulk-assign-btn" style="display:none;" onclick="showBulkAssign()">Bulk Assign Selected</button>
+    <span style="font-size:12px;color:#868e96;margin-left:auto;">Drag cards between columns to assign stations</span>
+</div>
+<div id="board-container">
+    <div class="loading">Loading dispatch board...</div>
+</div>
+<div id="bulk-modal"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    let boardData = null;
+    let selectedSteps = new Set();
+
+    window.loadBoard = async function() {
+        const container = document.getElementById('board-container');
+        try {
+            boardData = await api('api/dispatch/board/');
+            renderBoard(boardData.columns);
+        } catch (e) {
+            container.innerHTML = `<div class="empty-state" style="color:#e03131;">Failed to load board: ${e.message}</div>`;
+        }
+    };
+
+    function renderBoard(columns) {
+        const container = document.getElementById('board-container');
+        selectedSteps.clear();
+        updateBulkButton();
+
+        let html = '<div class="kanban">';
+        for (const col of columns) {
+            const stationName = col.station ? col.station.name : 'Unassigned';
+            const stationId = col.station ? col.station.id : 'unassigned';
+
+            html += `<div class="kanban-column" data-station-id="${stationId}"
+                          ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)"
+                          ondrop="handleDrop(event, '${stationId}')">
+                <div class="kanban-column-header">
+                    <span>${stationName}</span>
+                    <span class="kanban-column-count">${col.steps.length}</span>
+                </div>`;
+
+            if (col.steps.length === 0) {
+                html += '<div style="text-align:center;padding:20px;color:#adb5bd;font-size:12px;">No steps</div>';
+            }
+
+            for (const step of col.steps) {
+                const urgent = step.build_target_date && new Date(step.build_target_date) < new Date(Date.now() + 86400000);
+                html += `<div class="kanban-card" draggable="true"
+                              data-step-id="${step.id}" data-build-id="${step.build_id}"
+                              ondragstart="handleDragStart(event, ${step.id}, ${step.build_id})"
+                              ondragend="handleDragEnd(event)"
+                              ${urgent ? 'style="border-left:3px solid #e03131;"' : ''}>
+                    <div style="display:flex;justify-content:space-between;align-items:start;">
+                        <div>
+                            <input type="checkbox" class="step-checkbox" data-step-id="${step.id}"
+                                   onchange="toggleSelect(${step.id})" style="margin-right:6px;vertical-align:middle;">
+                            <strong style="font-size:13px;">${step.build_reference || 'Build'}</strong>
+                        </div>
+                        ${statusBadge(step.status)}
+                    </div>
+                    <div style="margin-top:6px;font-size:13px;">${step.name}</div>
+                    <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
+                        ${stepTypeBadge(step.step_type)}
+                        <span style="font-size:11px;color:${urgent ? '#e03131;font-weight:600' : '#868e96'};">
+                            ${formatDate(step.build_target_date)}
+                        </span>
+                    </div>
+                </div>`;
+            }
+
+            html += '</div>';
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    // Drag and drop
+    let dragData = null;
+
+    window.handleDragStart = function(e, stepId, buildId) {
+        dragData = { stepId, buildId };
+        e.target.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', stepId);
+    };
+
+    window.handleDragEnd = function(e) {
+        e.target.classList.remove('dragging');
+        document.querySelectorAll('.kanban-column.drag-over').forEach(c => c.classList.remove('drag-over'));
+    };
+
+    window.handleDragOver = function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        e.currentTarget.classList.add('drag-over');
+    };
+
+    window.handleDragLeave = function(e) {
+        e.currentTarget.classList.remove('drag-over');
+    };
+
+    window.handleDrop = async function(e, stationId) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        if (!dragData) return;
+
+        const assignStationId = stationId === 'unassigned' ? null : parseInt(stationId);
+        try {
+            await api(`api/builds/${dragData.buildId}/steps/${dragData.stepId}/station/`, {
+                method: 'PUT',
+                body: JSON.stringify({ station_id: assignStationId }),
+            });
+            loadBoard();
+        } catch (err) {
+            alert('Failed to assign station: ' + err.message);
+        }
+        dragData = null;
+    };
+
+    // Selection for bulk assign
+    window.toggleSelect = function(stepId) {
+        if (selectedSteps.has(stepId)) {
+            selectedSteps.delete(stepId);
+        } else {
+            selectedSteps.add(stepId);
+        }
+        updateBulkButton();
+    };
+
+    function updateBulkButton() {
+        const btn = document.getElementById('bulk-assign-btn');
+        btn.style.display = selectedSteps.size > 0 ? 'inline-block' : 'none';
+        btn.textContent = `Bulk Assign (${selectedSteps.size})`;
+    }
+
+    window.showBulkAssign = function() {
+        if (selectedSteps.size === 0) return;
+        const modal = document.getElementById('bulk-modal');
+        let stationOpts = '<option value="">-- Select Station --</option>';
+        if (boardData) {
+            for (const col of boardData.columns) {
+                if (col.station) {
+                    stationOpts += `<option value="${col.station.id}">${col.station.name}</option>`;
+                }
+            }
+        }
+        modal.innerHTML = `
+            <div class="detail-modal-overlay" onclick="closeBulkModal(event)">
+                <div class="detail-modal" onclick="event.stopPropagation()">
+                    <button class="close-btn" onclick="closeBulkModal()">&times;</button>
+                    <h3>Bulk Assign ${selectedSteps.size} Steps</h3>
+                    <div style="margin:16px 0;">
+                        <label style="font-size:13px;color:#495057;">Assign to station:</label>
+                        <select id="bulk-station-select" style="width:100%;padding:8px;border:1px solid #ced4da;border-radius:6px;margin-top:4px;">
+                            ${stationOpts}
+                        </select>
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="card-actions" style="padding:6px 16px;border:1px solid #ced4da;border-radius:6px;cursor:pointer;background:#fff;" onclick="closeBulkModal()">Cancel</button>
+                        <button style="padding:6px 16px;border:none;border-radius:6px;cursor:pointer;background:#228be6;color:#fff;font-weight:500;" onclick="executeBulkAssign()">Assign</button>
+                    </div>
+                </div>
+            </div>`;
+    };
+
+    window.executeBulkAssign = async function() {
+        const stationId = document.getElementById('bulk-station-select').value;
+        if (!stationId) { alert('Select a station'); return; }
+        const assignments = Array.from(selectedSteps).map(id => ({
+            step_id: id, station_id: parseInt(stationId),
+        }));
+        try {
+            await api('api/dispatch/bulk-assign/', {
+                method: 'POST',
+                body: JSON.stringify({ assignments }),
+            });
+            closeBulkModal();
+            loadBoard();
+        } catch (e) {
+            alert('Bulk assign failed: ' + e.message);
+        }
+    };
+
+    window.closeBulkModal = function(e) {
+        if (!e || e.target.classList.contains('detail-modal-overlay')) {
+            document.getElementById('bulk-modal').innerHTML = '';
+        }
+    };
+
+    loadBoard();
+})();
+</script>
+{% endblock %}

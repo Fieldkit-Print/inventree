@@ -85,6 +85,7 @@ class StockSyncCheckpoint(models.Model):
 # Production Steps
 # ---------------------------------------------------------------------------
 
+# Legacy constant kept for reference during data migrations only.
 OPERATION_TYPES = [
     ('digital_print', 'Digital Print'),
     ('offset_print', 'Offset Print'),
@@ -111,6 +112,36 @@ OPERATION_TYPES = [
 ]
 
 
+class StepType(models.Model):
+    """User-configurable production step type."""
+
+    class Meta:
+        app_label = 'ponderosa_plugin'
+        ordering = ['sort_order', 'name']
+
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(max_length=100, unique=True)
+    description = models.TextField(blank=True, default='')
+    color = models.CharField(
+        max_length=7, default='#1971c2',
+        help_text='Hex color for UI badges',
+    )
+    icon = models.CharField(max_length=50, blank=True, default='')
+    station_group = models.CharField(
+        max_length=50, blank=True, default='',
+        help_text='Logical group linking this type to compatible stations',
+    )
+    is_automatable = models.BooleanField(
+        default=False,
+        help_text='Whether N8N can trigger execution of this step type',
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
 class Station(models.Model):
     """A physical piece of equipment on the shop floor."""
 
@@ -118,21 +149,16 @@ class Station(models.Model):
         app_label = 'ponderosa_plugin'
         ordering = ['name']
 
-    STATION_TYPES = [
-        ('press', 'Press'),
-        ('finishing', 'Finishing'),
-        ('binding', 'Binding'),
-        ('packaging', 'Packaging'),
-        ('qc', 'Quality Control'),
-    ]
-
     name = models.CharField(max_length=100, unique=True)
-    station_type = models.CharField(max_length=20, choices=STATION_TYPES)
+    station_type = models.CharField(
+        max_length=50, blank=True, default='',
+        help_text='Free-text category (e.g. press, finishing, embroidery)',
+    )
     active = models.BooleanField(default=True)
     metadata = models.JSONField(default=dict, blank=True)
 
     def __str__(self):
-        return f"{self.name} ({self.get_station_type_display()})"
+        return f"{self.name} ({self.station_type})" if self.station_type else self.name
 
 
 class ProductionStepTemplate(models.Model):
@@ -149,13 +175,26 @@ class ProductionStepTemplate(models.Model):
         related_name='production_step_templates',
     )
     sequence = models.PositiveIntegerField()
-    operation_type = models.CharField(max_length=20, choices=OPERATION_TYPES)
+    step_type = models.ForeignKey(
+        StepType,
+        on_delete=models.PROTECT,
+        related_name='templates',
+    )
     name = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default='')
     estimated_duration = models.DurationField(null=True, blank=True)
+    station_group = models.CharField(
+        max_length=50, blank=True, default='',
+        help_text='Override station_group from step type for this template',
+    )
+    is_automatable = models.BooleanField(default=False)
     metadata = models.JSONField(
         default=dict, blank=True,
         help_text='Attachment IDs linking to production files on the Part',
     )
+
+    def effective_station_group(self):
+        return self.station_group or self.step_type.station_group
 
     def __str__(self):
         return f"{self.part} step {self.sequence}: {self.name}"
@@ -175,9 +214,11 @@ class BuildOrderStep(models.Model):
 
     STEP_STATUSES = [
         ('pending', 'Pending'),
+        ('queued', 'Queued'),
         ('in_progress', 'In Progress'),
         ('completed', 'Completed'),
         ('on_hold', 'On Hold'),
+        ('blocked', 'Blocked'),
         ('skipped', 'Skipped'),
     ]
 
@@ -193,7 +234,11 @@ class BuildOrderStep(models.Model):
         related_name='build_steps',
     )
     sequence = models.PositiveIntegerField()
-    operation_type = models.CharField(max_length=20, choices=OPERATION_TYPES)
+    step_type = models.ForeignKey(
+        StepType,
+        on_delete=models.PROTECT,
+        related_name='build_steps',
+    )
     name = models.CharField(max_length=200)
     station = models.ForeignKey(
         Station,
@@ -202,10 +247,19 @@ class BuildOrderStep(models.Model):
         related_name='assigned_steps',
     )
     status = models.CharField(max_length=20, choices=STEP_STATUSES, default='pending')
+    assigned_to = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_build_steps',
+    )
+    priority = models.PositiveIntegerField(default=0, help_text='Lower = higher priority')
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     operator_notes = models.TextField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Build {self.build_id} step {self.sequence}: {self.name} [{self.status}]"
