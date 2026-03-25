@@ -7,8 +7,8 @@ setup(
     packages=find_packages(),
     package_data={
         'ponderosa_plugin': [
-            'ui/static/ponderosa/*.js',
-            'ui/static/ponderosa/*.css',
+            'static/plugins/ponderosa/*.js',
+            'static/plugins/ponderosa/*.css',
             'templates/ponderosa/*.html',
         ],
     },
